@@ -216,6 +216,52 @@ client_apps = {
 }
 ```
 
+**What `publisher_role` means and how it resolves**
+
+`publisher_role` is a logical name — not a publisher name or ID. You never interact
+with a publisher name or ID directly. Instead, you declare which _role_ your apps
+should use, and Terraform resolves the role to actual publishers at plan time by
+reading `shared/publisher-registry.yaml`, which is owned and maintained by the
+Infrastructure team.
+
+Here is what that file looks like:
+
+```yaml
+# shared/publisher-registry.yaml
+roles:
+  us-west-primary:       # ← matches your publisher_role value
+    active:
+      - us-west-dc1-primary-v2   # ← the physical publisher Terraform will use
+  us-west-secondary:
+    active:
+      - us-west-dc1-secondary
+```
+
+The resolution chain at plan time:
+
+1. Terraform reads your `publisher_role = "us-west-primary"` from `terraform.tfvars`
+2. It reads `shared/publisher-registry.yaml` and finds the `active` list under that role
+3. It looks up each publisher name in the Netskope API to get its numeric ID
+4. It associates your apps with those publisher IDs in the tenant
+
+**You never need to know the publisher ID or publisher name.** When Infrastructure
+replaces a publisher, they update the registry file and you re-apply — the new
+publisher flows through automatically with no change to your config.
+
+During a publisher cycling operation, the registry briefly lists two publishers under
+a role so your apps stay reachable throughout the transition:
+
+```yaml
+roles:
+  us-west-primary:
+    active:
+      - us-west-dc1-primary       # retiring — still active during transition
+      - us-west-dc1-primary-v2    # replacement — already registered and connected
+```
+
+Your apps are associated with both publishers simultaneously during this window.
+See Part 3 for the full cycling procedure.
+
 Run the guardrail, then apply:
 
 ```bash

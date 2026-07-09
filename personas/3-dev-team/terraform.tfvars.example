@@ -1,0 +1,40 @@
+# personas/3-dev-team/terraform.tfvars.example
+#
+# Copy to terraform.tfvars and edit as needed.
+# DO NOT put credentials here — set them via environment variables:
+#
+#   source ../../scripts/set-env.sh
+#
+# This is the Section 10 onboarding scenario from the design doc:
+# the acme-mfg team onboards two apps via the self-service model.
+
+environment    = "production"
+team_name      = "acme-mfg"
+publisher_role = "us-west-primary"
+
+# ── Registry mode ─────────────────────────────────────────────────────────────
+# Local test mode (default) — reads shared/publisher-registry.yaml from disk.
+# For GitHub demo mode, set use_remote_registry = true and provide the URL:
+#
+# use_remote_registry = true
+# registry_source_url = "https://raw.githubusercontent.com/YOUR_ORG/netskope-npa-devops/main/shared/publisher-registry.yaml"
+
+use_remote_registry = false
+
+# ── Apps ──────────────────────────────────────────────────────────────────────
+# Client-based apps only. tier must be in shared/tag-taxonomy.yaml approved_tiers.
+# port must be a quoted string. Run the guardrail check before applying:
+#   python3 ../../policy/check_guardrails.py . --plan-file tfplan.json
+
+client_apps = {
+  ssh-bastion = {
+    hostname = "bastion.acme.internal"
+    port     = "22"
+    tier     = "infrastructure"
+  }
+  postgres-orders = {
+    hostname = "orders-db.acme.internal"
+    port     = "5432"
+    tier     = "database-tier"
+  }
+}

@@ -1,0 +1,72 @@
+# personas/3-dev-team/terraform.tfvars.badexample
+#
+# Deliberately broken — trips all five CI guardrail checks.
+# Use this to prove the guardrail works before trusting it:
+#
+#   # 1. Generate a plan using this file
+#   terraform plan -var-file=terraform.tfvars.badexample -out=badplan.tfplan
+#   terraform show -json badplan.tfplan > badplan.json
+#
+#   # 2. Run the guardrail — expect non-zero exit and per-check FAIL output
+#   python3 ../../policy/check_guardrails.py . --plan-file badplan.json
+#
+# Then run the same check against the good example:
+#   terraform plan -var-file=terraform.tfvars.example -out=goodplan.tfplan
+#   terraform show -json goodplan.tfplan > goodplan.json
+#   python3 ../../policy/check_guardrails.py . --plan-file goodplan.json
+#   # All checks should PASS.
+#
+# ── What each app below triggers ──────────────────────────────────────────────
+#
+# CHECK 1 — clientless_access = true
+#   Cannot be triggered via tfvars because apps.tf hardcodes clientless_access = false.
+#   To test check 1 manually: temporarily edit apps.tf and change `clientless_access = false`
+#   to `clientless_access = true`, run the guardrail, then revert.
+#
+# CHECK 5 — literal numeric publisher_id in source
+#   Cannot be triggered via tfvars — this is a source code check.
+#   To test check 5 manually: temporarily add a publisher block like:
+#     publishers = [{ publisher_id = 99999, publisher_name = "bad" }]
+#   to apps.tf, run the guardrail, then revert.
+#
+# Checks 2, 3, and 4 are demonstrated via the client_apps below.
+
+environment    = "production"
+team_name      = "acme-mfg"
+publisher_role = "us-west-primary"
+
+client_apps = {
+
+  # ── CHECK 2: missing required tag "tier" ────────────────────────────────────
+  # The guardrail reads required_tags from shared/tag-taxonomy.yaml and verifies
+  # all four (managed-by-terraform, environment, tier, team) appear in the plan.
+  # This app has no tier field — the tag will be missing from the plan JSON.
+  no-tier-app = {
+    hostname = "notier.acme.internal"
+    port     = "8080"
+    tier     = ""  # Empty string — tag will be present but value is blank; guardrail treats as missing
+  }
+
+  # ── CHECK 3: tier not in approved_tiers ─────────────────────────────────────
+  # The guardrail reads approved_tiers from shared/tag-taxonomy.yaml.
+  # "custom-tier" is not listed there — this app has no matching Security rule
+  # and would be caught by the deny-all rule at runtime even if the guardrail
+  # were bypassed.
+  bad-tier-app = {
+    hostname = "badtier.acme.internal"
+    port     = "8080"
+    tier     = "custom-tier"
+  }
+
+  # ── CHECK 4: port value that should be a string ──────────────────────────────
+  # The guardrail greps raw tfvars source for unquoted numeric port assignments.
+  # Terraform coerces 9090 → "9090" at the variable boundary, so this cannot be
+  # caught from the plan JSON alone — the source check is necessary.
+  # NOTE: When copying this to terraform.tfvars, 9090 below is intentionally unquoted.
+  bad-port-app = {
+    hostname = "badport.acme.internal"
+    port     = 9090
+    tier     = "web-tier"
+  }
+
+}

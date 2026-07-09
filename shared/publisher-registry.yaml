@@ -1,0 +1,20 @@
+# shared/publisher-registry.yaml — owned by the Infrastructure persona.
+#
+# The Dev-team persona resolves publishers by ROLE through this file, never
+# by a hardcoded publisher name. See Section 8.6.2 of the design doc.
+#
+# During a publisher cycling operation (Section 8.6.4), this file will briefly
+# list TWO publishers under a role — the incumbent and its replacement — so that
+# the Dev-team's apps stay associated during the transition. The cycle-publisher.sh
+# script manages these edits at each stage.
+#
+# Roles map to physical publisher names registered with the Netskope tenant.
+# The Dev-team reads this file; only the Infrastructure persona writes it.
+
+roles:
+  us-west-primary:
+    active:
+      - us-west-dc1-primary-v2
+  us-west-secondary:
+    active:
+      - us-west-dc1-secondary

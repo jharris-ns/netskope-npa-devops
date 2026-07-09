@@ -1,0 +1,24 @@
+# shared/tag-taxonomy.yaml — owned by the Security persona.
+#
+# Approved values for the "tier" tag. A Dev-team app using a tier not listed
+# here has no matching access rule and will be caught by the deny-by-default
+# rule (personas/2-security/rules-general.tf) rather than silently working.
+#
+# The CI guardrail script (policy/check_guardrails.py) validates all apps in
+# personas/3-dev-team/ against these lists before terraform plan runs.
+#
+# Changes to this file require a PR reviewed by @security-team-demo (see
+# .github/CODEOWNERS). Adding a tier here without a corresponding rule in
+# personas/2-security/rules-teams.tf will pass the guardrail check but the
+# app will fall through to the deny-all rule — add both together.
+
+approved_tiers:
+  - web-tier
+  - database-tier
+  - infrastructure
+
+required_tags:
+  - managed-by-terraform
+  - environment
+  - tier
+  - team

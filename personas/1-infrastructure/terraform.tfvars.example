@@ -1,0 +1,55 @@
+# personas/1-infrastructure/terraform.tfvars.example
+#
+# Copy to terraform.tfvars and edit as needed.
+# DO NOT put credentials here — set them via environment variables:
+#
+#   source ../../scripts/set-env.sh
+#
+# This sources ~/.env and exports:
+#   TF_VAR_gcp_project_id       ← NETSKOPE_GCP_PROJECT_ID in ~/.env
+#   TF_VAR_netskope_server_url  ← NETSKOPE_SERVER_URL in ~/.env
+#   TF_VAR_netskope_api_key     ← NETSKOPE_API_KEY in ~/.env
+
+# ── GCP ───────────────────────────────────────────────────────────────────────
+# gcp_project_id is set via TF_VAR_gcp_project_id — do not put it here.
+
+gcp_region = "us-west1"
+
+# Explicit zone list — optional. If omitted, Terraform auto-selects available
+# zones in gcp_region and distributes publishers across them.
+# zones = ["us-west1-a", "us-west1-b"]
+
+# ── Publishers ────────────────────────────────────────────────────────────────
+# The default two-publisher config matches shared/publisher-registry.yaml.
+# Publisher names here must exactly match the names in the registry file.
+
+publishers = {
+  primary = {
+    name = "us-west-dc1-primary"
+  }
+  secondary = {
+    name = "us-west-dc1-secondary"
+  }
+}
+
+publisher_machine_type = "n2-standard-2"
+
+# ── Networking ────────────────────────────────────────────────────────────────
+create_vpc  = true
+subnet_cidr = "10.0.0.0/24"
+
+# To use an existing VPC instead:
+# create_vpc                 = false
+# existing_network_self_link = "https://www.googleapis.com/compute/v1/projects/PROJECT/global/networks/NETWORK"
+# existing_subnet_self_links = ["https://www.googleapis.com/compute/v1/projects/PROJECT/regions/REGION/subnetworks/SUBNET"]
+
+# ── Monitoring ────────────────────────────────────────────────────────────────
+enable_monitoring = false
+
+# To enable alerting, set enable_monitoring = true and provide notification channels:
+# alert_notification_channels = ["projects/PROJECT_ID/notificationChannels/CHANNEL_ID"]
+
+# ── Labels ────────────────────────────────────────────────────────────────────
+environment   = "production"
+cost_center   = "it-operations"
+project_label = "npa-publisher"

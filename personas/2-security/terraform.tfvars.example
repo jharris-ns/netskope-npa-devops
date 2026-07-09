@@ -1,0 +1,45 @@
+# personas/2-security/terraform.tfvars.example
+#
+# Copy to terraform.tfvars and edit as needed.
+# DO NOT put credentials here — set them via environment variables:
+#
+#   source ../../scripts/set-env.sh
+#
+# Group names must EXACTLY match your IdP (case-sensitive).
+# Wrong names create rules that silently never match — test with a real user.
+
+environment = "production"
+
+# ── Admin groups ──────────────────────────────────────────────────────────────
+# Full access to all tiers. Typically IT/SRE/platform teams.
+admin_groups = [
+  # "IT-Administrators",
+  # "SRE-Team",
+]
+
+# ── Tier-specific groups ──────────────────────────────────────────────────────
+# Each group gets client access to apps tagged with the matching tier.
+# Leave a list empty to skip creating that tier's rule (no apps or no group yet).
+
+web_tier_groups = [
+  # "Engineering",
+  # "Developers",
+]
+
+database_tier_groups = [
+  # "Database-Admins",
+  # "Analytics-Team",
+]
+
+infrastructure_groups = [
+  # "Platform-Engineering",
+  # "SRE-Team",
+]
+
+# ── Blocked groups ────────────────────────────────────────────────────────────
+# Explicitly denied from all apps. Evaluated before any allow rule.
+# Leave empty to skip creating the deny rule.
+blocked_groups = [
+  # "Terminated-Users",
+  # "Security-Quarantine",
+]

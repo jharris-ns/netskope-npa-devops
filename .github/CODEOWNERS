@@ -1,0 +1,16 @@
+# CODEOWNERS — enforces the three-persona access boundary via GitHub PR review.
+#
+# NOTE: These handles are placeholders. For a real demo run, either:
+#   (a) substitute real GitHub usernames/teams, or
+#   (b) relax branch protection for a single-user demo (Settings → Branches →
+#       uncheck "Require a pull request before merging").
+#
+# In a production multi-repo design each persona would be a separate repo with
+# its own CODEOWNERS. Here we simulate that boundary with path-based ownership
+# in a single repo (see root README.md § Deliberate deviations).
+
+personas/1-infrastructure/          @infra-team-demo
+personas/2-security/                @security-team-demo
+personas/3-dev-team/                @acme-mfg-dev-leads-demo
+shared/tag-taxonomy.yaml            @security-team-demo
+shared/publisher-registry.yaml      @infra-team-demo

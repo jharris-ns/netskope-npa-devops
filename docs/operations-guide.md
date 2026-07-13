@@ -1,8 +1,8 @@
 # Netskope NPA Self-Service — Operations Guide
 
 This guide covers everything needed to run the NPA self-service operating model
-end-to-end: initial deployment, onboarding a new application, and replacing a
-publisher with zero app downtime.
+end-to-end: initial deployment, onboarding a new application, replacing a publisher
+with zero app downtime, and tearing everything down.
 
 ---
 
@@ -21,16 +21,16 @@ netskope-npa-devops/
 │   ├── 2-security/               ← Policy groups + tag-driven access rules
 │   └── 3-dev-team/               ← Private app definitions
 └── policy/
-    └── check_guardrails.py       ← CI validation script (Dev Team runs before apply)
+    └── check_guardrails.py       ← Validation script (Dev Team runs before apply)
 ```
 
 ### How the shared files connect the three personas
 
 **`shared/publisher-registry.yaml`** is the contract between Infrastructure and
-the Dev Team. Infrastructure registers physical publishers with Netskope and writes
-their names here, keyed by role. The Dev Team never touches a publisher name or ID
-directly — they declare a role, and Terraform looks up the current active publishers
-at plan time.
+the Dev Team. Infrastructure registers publishers with Netskope and writes their
+names here, keyed by role. The Dev Team declares a role name — Terraform looks up
+the active publishers for that role at plan time. No publisher name or ID ever
+appears in Dev Team config.
 
 ```yaml
 roles:
@@ -73,11 +73,11 @@ required_tags:
 
 ### Credentials
 
-Create `~/.env` with:
+Create `~/.env`:
 
 ```bash
-export NETSKOPE_SERVER_URL=https://your-tenant.goskope.com/api/v2
-export NETSKOPE_API_KEY=your-api-token
+NETSKOPE_SERVER_URL=https://your-tenant.goskope.com/api/v2
+NETSKOPE_API_KEY=your-api-token
 ```
 
 Run once per shell session from the repo root:
@@ -100,8 +100,8 @@ gcloud auth application-default login
 
 ## Part 1 — Initial Deployment
 
-Run these steps in order. Each persona is an independent Terraform root module;
-`cd` into the directory before running any Terraform commands.
+Run these steps in order. Each persona is an independent Terraform root module —
+`cd` into the directory before running any Terraform commands in it.
 
 ### Step 1: Infrastructure — deploy publishers
 
@@ -145,8 +145,7 @@ terraform output netskope_publisher_ids   # IDs assigned by the tenant
 ```
 
 > **Note:** If you need to re-run apply after the initial deployment, add
-> `-refresh=false` to skip a known provider issue where refreshing existing
-> publisher records returns an unmarshal error:
+> `-refresh=false` to avoid a known provider issue:
 > `terraform apply -refresh=false`
 
 ### Step 2: Security — deploy access rules
@@ -158,8 +157,8 @@ cp terraform.tfvars.example terraform.tfvars
 
 Edit `terraform.tfvars` to set your IdP group names. **Group names must exactly
 match your identity provider** — wrong names create rules that silently never match.
-Groups must be SCIM-provisioned; groups created manually in the Netskope console
-are not recognized by the policy API.
+Groups must be SCIM-provisioned into the Netskope tenant; groups created manually
+in the console are not recognized by the policy API.
 
 ```hcl
 environment           = "production"
@@ -177,14 +176,14 @@ terraform init
 terraform apply
 ```
 
-On first apply with no Dev Team apps, the tier-specific rules are not created (the
-count guard prevents empty `private_apps` lists, which the API rejects). The policy
-group and deny-all catch-all rule are created immediately.
+On first apply with no Dev Team apps yet, only the policy group and the catch-all
+deny rule are created. The tier-specific allow rules are created later in Step 4,
+once apps exist to put in them.
 
 **Verify:**
 
 ```bash
-terraform output rules_created    # deny_all = true; all tier rules = false (expected)
+terraform output rules_created    # deny_all = true; tier rules = false (expected at this stage)
 terraform output approved_tiers   # Tiers read from shared/tag-taxonomy.yaml
 ```
 
@@ -194,6 +193,18 @@ terraform output approved_tiers   # Tiers read from shared/tag-taxonomy.yaml
 cd personas/3-dev-team
 cp terraform.tfvars.example terraform.tfvars
 ```
+
+Before editing, understand the two values that connect your config to the shared files:
+
+- **`publisher_role`** is a logical name, not a publisher name or ID. Terraform reads
+  `shared/publisher-registry.yaml` at plan time and resolves the role to the active
+  publisher list maintained by Infrastructure. You never need to know a publisher name
+  or ID — when Infrastructure replaces a publisher, they update the registry and you
+  re-apply with no config change.
+
+- **`tier`** on each app must match a value in `approved_tiers` in
+  `shared/tag-taxonomy.yaml`. Security's access rules filter by this tag — setting
+  the right tier is how your app gets picked up by the correct rule automatically.
 
 Edit `terraform.tfvars`:
 
@@ -205,7 +216,7 @@ publisher_role = "us-west-primary"   # Must exist in shared/publisher-registry.y
 client_apps = {
   ssh-bastion = {
     hostname = "bastion.acme.internal"
-    port     = "22"            # Must be a quoted string — guardrail checks this
+    port     = "22"             # Must be a quoted string — guardrail checks this
     tier     = "infrastructure" # Must be in shared/tag-taxonomy.yaml approved_tiers
   }
   postgres-orders = {
@@ -216,61 +227,15 @@ client_apps = {
 }
 ```
 
-**What `publisher_role` means and how it resolves**
-
-`publisher_role` is a logical name — not a publisher name or ID. You never interact
-with a publisher name or ID directly. Instead, you declare which _role_ your apps
-should use, and Terraform resolves the role to actual publishers at plan time by
-reading `shared/publisher-registry.yaml`, which is owned and maintained by the
-Infrastructure team.
-
-Here is what that file looks like:
-
-```yaml
-# shared/publisher-registry.yaml
-roles:
-  us-west-primary:       # ← matches your publisher_role value
-    active:
-      - us-west-dc1-primary-v2   # ← the physical publisher Terraform will use
-  us-west-secondary:
-    active:
-      - us-west-dc1-secondary
-```
-
-The resolution chain at plan time:
-
-1. Terraform reads your `publisher_role = "us-west-primary"` from `terraform.tfvars`
-2. It reads `shared/publisher-registry.yaml` and finds the `active` list under that role
-3. It looks up each publisher name in the Netskope API to get its numeric ID
-4. It associates your apps with those publisher IDs in the tenant
-
-**You never need to know the publisher ID or publisher name.** When Infrastructure
-replaces a publisher, they update the registry file and you re-apply — the new
-publisher flows through automatically with no change to your config.
-
-During a publisher cycling operation, the registry briefly lists two publishers under
-a role so your apps stay reachable throughout the transition:
-
-```yaml
-roles:
-  us-west-primary:
-    active:
-      - us-west-dc1-primary       # retiring — still active during transition
-      - us-west-dc1-primary-v2    # replacement — already registered and connected
-```
-
-Your apps are associated with both publishers simultaneously during this window.
-See Part 3 for the full cycling procedure.
-
 Run the guardrail, then apply:
 
 ```bash
 terraform init
 
-# Source-only check (no plan needed — catches port/publisher_id issues)
+# Source-only check (no plan needed — catches port and publisher_id issues)
 python3 ../../policy/check_guardrails.py .
 
-# Full check with plan (catches tag and clientless_access issues)
+# Full check with plan (catches tag and tier issues)
 terraform plan -out=plan.tfplan
 terraform show -json plan.tfplan > plan.json
 python3 ../../policy/check_guardrails.py . --plan-file plan.json
@@ -278,10 +243,6 @@ python3 ../../policy/check_guardrails.py . --plan-file plan.json
 # Apply
 terraform apply plan.tfplan
 ```
-
-Terraform reads `shared/publisher-registry.yaml` at plan time, resolves
-`publisher_role = "us-west-primary"` to the active publisher list, and associates
-your apps with those publishers. You never see or touch a publisher ID.
 
 **Verify:**
 
@@ -297,9 +258,10 @@ cd personas/2-security
 terraform apply
 ```
 
-The data source re-reads all private apps from the tenant, finds the new apps and
-their tier tags, and creates the tier-specific allow rules automatically. **No
-Security config change is required** — this is the tag-driven self-service model.
+Security's Terraform re-reads all private apps from the tenant, finds the new apps
+and their tier tags, and creates the tier-specific allow rules automatically. **No
+Security config change is required** — this is the tag-driven self-service model in
+action.
 
 **Verify:**
 
@@ -321,9 +283,18 @@ terraform output apps_by_tier
 ## Part 2 — Dev Team: Adding a New Application
 
 The Dev Team can add apps at any time without coordinating with Infrastructure or
-Security. The only requirement is that the tier and publisher role already exist.
+Security. The only requirement is that the tier and publisher role already exist in
+the shared files.
 
 ### 1. Add the app to terraform.tfvars
+
+Check `shared/tag-taxonomy.yaml` to confirm the tier is approved:
+
+```bash
+cat ../../shared/tag-taxonomy.yaml
+```
+
+Then add the app:
 
 ```hcl
 client_apps = {
@@ -332,19 +303,14 @@ client_apps = {
   web-portal = {
     hostname = "portal.acme.internal"
     port     = "443"
-    tier     = "web-tier"    # Must be in shared/tag-taxonomy.yaml approved_tiers
+    tier     = "web-tier"   # Must be in shared/tag-taxonomy.yaml approved_tiers
   }
 }
 ```
 
-Check `shared/tag-taxonomy.yaml` to confirm the tier is approved before using it:
-
-```bash
-cat ../../shared/tag-taxonomy.yaml
-```
-
-If the tier you need is not listed, open a PR to add it to `tag-taxonomy.yaml` and
-request Security to add the corresponding rule in `rules-teams.tf`.
+If the tier you need is not listed in `tag-taxonomy.yaml`, open a PR to add it and
+ask Security to add the corresponding rule in `rules-teams.tf`. See the Appendix for
+the full procedure.
 
 ### 2. Run the guardrail and apply
 
@@ -360,29 +326,8 @@ terraform apply plan.tfplan
 
 ### 3. Notify Security to re-apply
 
-Security runs `terraform apply` in `personas/2-security/`. Their `web-tier-access`
-rule (if configured) automatically picks up the new app — no Security config change
-needed.
-
-### How the publisher lookup works
-
-`data-registry.tf` in the Dev Team persona reads `shared/publisher-registry.yaml`
-using a `local_file` data source (or `http` data source in GitHub mode) and parses
-the YAML to find active publishers for your role:
-
-```hcl
-# terraform.tfvars
-publisher_role = "us-west-primary"
-
-# data-registry.tf resolves this to:
-# → reads shared/publisher-registry.yaml
-# → finds roles.us-west-primary.active
-# → returns ["us-west-dc1-primary-v2"]
-# → associates apps with that publisher
-```
-
-During a publisher cycling operation this list briefly contains two publishers.
-Your apps remain continuously reachable throughout the transition.
+Security runs `terraform apply` in `personas/2-security/`. The tier rule for your
+app's tier automatically picks up the new app — no Security config change needed.
 
 ---
 
@@ -416,7 +361,7 @@ publishers = {
 }
 ```
 
-Apply (use `-refresh=false` to avoid the provider refresh bug):
+Apply:
 
 ```bash
 cd personas/1-infrastructure
@@ -427,7 +372,7 @@ The new VM bootstraps and registers with Netskope (~5–10 minutes). Verify the 
 publisher shows **Connected** in the Netskope console before proceeding.
 
 ```bash
-terraform output netskope_publisher_ids   # Shows ID for primary-v2
+terraform output netskope_publisher_ids   # Confirms ID assigned to primary-v2
 ```
 
 ### Stage 2 — Dual-list both publishers in the registry
@@ -449,8 +394,8 @@ cd personas/3-dev-team
 terraform apply
 ```
 
-Terraform reads the updated registry and updates each app to be associated with
-both publishers. Existing sessions on the old publisher continue uninterrupted.
+Terraform reads the updated registry and associates each app with both publishers.
+Existing sessions on the old publisher continue uninterrupted.
 
 ```bash
 terraform output active_publisher_names
@@ -460,7 +405,8 @@ terraform output active_publisher_names
 ### Stage 4 — Verify the new publisher is serving traffic
 
 Confirm the new publisher shows **Connected** and is actively handling requests in
-the Netskope console. Allow time for existing sessions to migrate naturally.
+the Netskope console. Allow time for existing sessions to migrate naturally before
+proceeding.
 
 ### Stage 5 — Remove the old publisher from the registry
 
@@ -487,8 +433,6 @@ terraform output active_publisher_names
 
 ### Stage 7 — Verify no apps are blocking retirement
 
-Run the retirement check against the old publisher:
-
 ```bash
 cd personas/1-infrastructure
 terraform apply -refresh=false -var="retiring_publisher_name=us-west-dc1-primary"
@@ -496,12 +440,12 @@ terraform output apps_blocking_retirement
 # Must be [] before proceeding
 ```
 
-If the list is non-empty, some apps are still associated with the old publisher.
-Return to Stage 5 and ensure the Dev Team apply completed successfully.
+If the list is non-empty, the Dev Team apply did not complete successfully. Return
+to Stage 5 and ensure it completed without errors.
 
 ### Stage 8 — Destroy the old publisher
 
-Remove the old publisher from `terraform.tfvars`:
+Remove the retiring entry from `terraform.tfvars`:
 
 ```hcl
 publishers = {
@@ -522,49 +466,87 @@ terraform apply -refresh=false
 ```
 
 This destroys the GCP VM, deletes the Secret Manager secret, and removes the
-Netskope publisher record. If the publisher delete fails (still shows Connected),
-wait 2 minutes and apply again.
+Netskope publisher record. If the publisher delete fails because the VM is still
+showing Connected, wait 2 minutes and apply again.
 
 ---
 
-## Appendix — Shared File Reference
+## Part 4 — Teardown
+
+Destroying all three personas requires running them in a specific order. The Netskope
+API enforces referential integrity: it will not delete a private app that is still
+referenced by a policy rule, and it will not delete a publisher that still has apps
+associated with it. Attempting to destroy in the wrong order fails with an explicit
+API error.
+
+### Correct destroy order
+
+```
+Security → Dev Team → Infrastructure
+```
+
+| Step | Persona | Why |
+|---|---|---|
+| 1 | Security | Removes NPA rules that reference apps. Until these are gone, the API rejects app deletion. |
+| 2 | Dev Team | Removes private apps. Publishers are still running so the API accepts the delete. |
+| 3 | Infrastructure | Removes Netskope publisher records and GCP VMs. Apps are already gone so publishers have no associations blocking deletion. |
+
+### What happens if you destroy in the wrong order
+
+If you run `terraform destroy` in the Dev Team persona before the Security persona,
+the Netskope API rejects the operation:
+
+```
+API error: Found reference of private app in policy:production-admin-database-tier,
+production-database-tier-access ; Cannot delete private app
+```
+
+No changes are made — Terraform exits and the state is unchanged. Destroy the
+Security persona first, then retry Dev Team.
+
+### Running the teardown
+
+```bash
+# Step 1 — Security
+cd personas/2-security
+terraform destroy -auto-approve
+
+# Step 2 — Dev Team
+cd ../3-dev-team
+terraform destroy -auto-approve
+
+# Step 3 — Infrastructure
+cd ../1-infrastructure
+terraform destroy -refresh=false -auto-approve
+```
+
+The `-refresh=false` flag on the Infrastructure destroy avoids a known provider bug
+where refreshing existing publisher records returns an unmarshal error. If the
+publisher delete fails because a VM is still showing Connected, wait 2 minutes and
+run `terraform destroy -refresh=false` again.
+
+---
+
+## Appendix — Reference
 
 ### `shared/publisher-registry.yaml`
 
 **Owner:** Infrastructure (write). Dev Team (read-only).
 
 Maps logical publisher roles to physical publisher names registered in the Netskope
-tenant. During publisher cycling, a role briefly lists two publishers; the Dev Team
-re-applies twice to keep apps continuously associated.
-
-```yaml
-roles:
-  <role-name>:
-    active:
-      - <publisher-name>      # Exact name from Netskope publisher record
-```
+tenant. The Dev Team references a role name in their `terraform.tfvars`; Terraform
+resolves it to the active publisher list at plan time. During publisher cycling, a
+role briefly lists two publishers so Dev Team apps stay continuously associated
+throughout the transition.
 
 ### `shared/tag-taxonomy.yaml`
 
 **Owner:** Security (write). Dev Team (read-only).
 
-Defines which tier values are valid and which tags every app must carry. The
-guardrail script (`policy/check_guardrails.py`) validates apps against this file
-before apply. Security must add a corresponding rule in `rules-teams.tf` whenever
-a new tier is added here.
-
-```yaml
-approved_tiers:
-  - web-tier
-  - database-tier
-  - infrastructure
-
-required_tags:
-  - managed-by-terraform
-  - environment
-  - tier
-  - team
-```
+Defines which tier values are valid (`approved_tiers`) and which tags every private
+app must carry (`required_tags`). The guardrail script validates Dev Team apps
+against this file before apply. Security must add a corresponding rule in
+`rules-teams.tf` whenever a new tier is added here.
 
 ### Adding a new tier
 
@@ -575,7 +557,7 @@ required_tags:
 5. Dev Team can immediately use the new tier tag — their next apply creates the
    app and Security's next apply automatically covers it with the new rule
 
-### CI guardrail checks
+### Guardrail checks
 
 `policy/check_guardrails.py` runs five checks before any Dev Team apply:
 
@@ -584,10 +566,10 @@ required_tags:
 | 1 | No app has `clientless_access = true` | Yes |
 | 2 | All required tags present on every app | Yes |
 | 3 | All tier tags are in `approved_tiers` | Yes |
-| 4 | Port values are quoted strings (not integers) | No |
+| 4 | Port values are quoted strings, not integers | No |
 | 5 | No literal numeric `publisher_id` in `.tf` source | No |
 
-Checks 4 and 5 run on source files. Checks 1–3 require a plan JSON file:
+Checks 4 and 5 run directly on source files. Checks 1–3 require a plan JSON:
 
 ```bash
 terraform plan -out=plan.tfplan
